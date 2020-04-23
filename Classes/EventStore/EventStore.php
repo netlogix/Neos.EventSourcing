@@ -30,6 +30,11 @@ use Neos\EventSourcing\EventStore\Storage\EventStorageInterface;
 final class EventStore
 {
     /**
+     * @var string
+     */
+    private $identifier;
+
+    /**
      * @var EventStorageInterface
      */
     private $storage;
@@ -72,11 +77,13 @@ final class EventStore
 
     /**
      * @param EventStorageInterface $storage
+     * @param string $identifier
      * @internal Do not instantiate this class directly but use the EventStoreManager
      */
-    public function __construct(EventStorageInterface $storage)
+    public function __construct(EventStorageInterface $storage, string $identifier = '')
     {
         $this->storage = $storage;
+        $this->identifier = $identifier;
     }
 
     /**
@@ -172,5 +179,13 @@ final class EventStore
     public function setup(): Result
     {
         return $this->storage->setup();
+    }
+
+    /**
+     * @return string
+     */
+    public function getIdentifier(): string
+    {
+        return $this->identifier;
     }
 }

@@ -12,10 +12,11 @@ namespace Neos\EventSourcing\Projection;
  * source code.
  */
 
-use Neos\EventSourcing\EventListener\AppliedEventsLogRepository;
+use Doctrine\ORM\EntityManagerInterface;
 use Neos\EventSourcing\EventListener\EventListenerInvoker;
 use Neos\EventSourcing\EventListener\EventListenerLocator;
 use Neos\EventSourcing\EventListener\Exception\EventCouldNotBeAppliedException;
+use Neos\EventSourcing\EventStore\EventStoreManager;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\ObjectManagement\ObjectManagerInterface;
 use Neos\Flow\Reflection\ClassReflection;
@@ -44,15 +45,9 @@ class ProjectionManager
 
     /**
      * @Flow\Inject
-     * @var AppliedEventsLogRepository
+     * @var EventStoreManager
      */
-    protected $appliedEventsLogRepository;
-
-    /**
-     * @Flow\Inject
-     * @var EventListenerInvoker
-     */
-    protected $eventListenerInvoker;
+    protected $eventStoreManager;
 
     /**
      * @var array in the format ['<projectionIdentifier>' => '<projectorClassName>', ...]
@@ -113,20 +108,29 @@ class ProjectionManager
      *
      * @param string $projectionIdentifier unambiguous identifier of the projection to replay
      * @param \Closure $progressCallback If set, this callback is invoked for every applied event during replay with the arguments $sequenceNumber and $eventStreamVersion
+     * @param int $transactionBatchSize
      * @return void
      * @api
      * @throws EventCouldNotBeAppliedException
      */
-    public function replay(string $projectionIdentifier, \Closure $progressCallback = null): void
+    public function replay(string $projectionIdentifier, \Closure $progressCallback = null, int $transactionBatchSize = 1000): void
     {
         $projection = $this->getProjection($projectionIdentifier);
 
+        $eventStore = $this->eventStoreManager->getEventStoreForEventListener($projection->getProjectorClassName());
+
         /** @var ProjectorInterface $projector */
         $projector = $this->objectManager->get($projection->getProjectorClassName());
-        $this->appliedEventsLogRepository->removeHighestAppliedSequenceNumber($projection->getProjectorClassName());
         $projector->reset();
-        $this->appliedEventsLogRepository->ensureHighestAppliedSequenceNumbersAreInitialized();
-        $this->eventListenerInvoker->catchUp($projector, $progressCallback);
+
+        $connection = $this->objectManager->get(EntityManagerInterface::class)->getConnection();
+        $eventListenerInvoker = new EventListenerInvoker($eventStore, $projector, $connection);
+        if ($progressCallback !== null) {
+            $eventListenerInvoker->onProgress($progressCallback);
+        }
+        $eventListenerInvoker
+            ->withTransactionBatchSize($transactionBatchSize)
+            ->replay();
     }
 
     /**

@@ -121,7 +121,7 @@ final class EventStoreManager
             throw new StorageConfigurationException(sprintf('The configured Storage for Event Store "%s" does not implement the EventStorageInterface', $eventStoreIdentifier), 1492610908);
         }
         /** @noinspection PhpMethodParametersCountMismatchInspection */
-        $this->initializedEventStores[$eventStoreIdentifier] = $this->objectManager->get(EventStore::class, $storageInstance);
+        $this->initializedEventStores[$eventStoreIdentifier] = $this->objectManager->get(EventStore::class, $storageInstance, $eventStoreIdentifier);
 
         return $this->initializedEventStores[$eventStoreIdentifier];
     }

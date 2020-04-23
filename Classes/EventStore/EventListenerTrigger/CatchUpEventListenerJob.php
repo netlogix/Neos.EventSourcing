@@ -12,12 +12,14 @@ namespace Neos\EventSourcing\EventStore\EventListenerTrigger;
  * source code.
  */
 
+use Doctrine\ORM\EntityManagerInterface;
 use Flowpack\JobQueue\Common\Job\JobInterface;
 use Flowpack\JobQueue\Common\Queue\Message;
 use Flowpack\JobQueue\Common\Queue\QueueInterface;
 use Neos\EventSourcing\EventListener\EventListenerInterface;
 use Neos\EventSourcing\EventListener\EventListenerInvoker;
 use Neos\EventSourcing\EventListener\Exception\EventCouldNotBeAppliedException;
+use Neos\EventSourcing\EventStore\EventStoreManager;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\ObjectManagement\ObjectManagerInterface;
 
@@ -30,10 +32,9 @@ final class CatchUpEventListenerJob implements JobInterface
     protected $listenerClassName;
 
     /**
-     * @Flow\Inject
-     * @var EventListenerInvoker
+     * @var string
      */
-    protected $eventListenerInvoker;
+    protected $eventStoreIdentifier;
 
     /**
      * @Flow\Inject
@@ -41,9 +42,26 @@ final class CatchUpEventListenerJob implements JobInterface
      */
     protected $objectManager;
 
-    public function __construct(string $listenerClassName)
+    /**
+     * @Flow\Inject
+     * @var EntityManagerInterface
+     */
+    protected $entityManager;
+
+    public function __construct(string $listenerClassName, string $eventStoreIdentifier)
     {
         $this->listenerClassName = $listenerClassName;
+        $this->eventStoreIdentifier = $eventStoreIdentifier;
+    }
+
+    public function getListenerClassName(): string
+    {
+        return $this->listenerClassName;
+    }
+
+    public function getEventStoreIdentifier(): string
+    {
+        return $this->eventStoreIdentifier;
     }
 
     /**
@@ -56,12 +74,18 @@ final class CatchUpEventListenerJob implements JobInterface
     {
         /** @var EventListenerInterface $listener */
         $listener = $this->objectManager->get($this->listenerClassName);
-        $this->eventListenerInvoker->catchUp($listener);
+
+        /** @var EventStoreManager $eventStoreManager */
+        $eventStoreManager = $this->objectManager->get(EventStoreManager::class);
+        $eventStore = $eventStoreManager->getEventStore($this->eventStoreIdentifier);
+
+        $eventListenerInvoker = new EventListenerInvoker($eventStore, $listener, $this->entityManager->getConnection());
+        $eventListenerInvoker->catchUp();
         return true;
     }
 
     public function getLabel(): string
     {
-        return sprintf('Catch up event listener "%s"', $this->listenerClassName);
+        return sprintf('Catch up event listener "%s" from store "%s"', $this->listenerClassName, $this->eventStoreIdentifier);
     }
 }

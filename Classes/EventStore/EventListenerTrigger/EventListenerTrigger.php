@@ -15,8 +15,8 @@ namespace Neos\EventSourcing\EventStore\EventListenerTrigger;
 use Flowpack\JobQueue\Common\Job\JobManager;
 use Neos\EventSourcing\Event\Decorator\EventDecoratorUtilities;
 use Neos\EventSourcing\Event\DomainEvents;
-use Neos\EventSourcing\EventListener\AppliedEventsLogRepository;
 use Neos\EventSourcing\EventListener\EventListenerLocator;
+use Neos\EventSourcing\EventStore\EventStoreManager;
 use Neos\Flow\Annotations as Flow;
 
 /**
@@ -45,9 +45,9 @@ final class EventListenerTrigger
 
     /**
      * @Flow\Inject
-     * @var AppliedEventsLogRepository
+     * @var EventStoreManager
      */
-    protected $appliedEventsLogRepository;
+    protected $eventStoreManager;
 
     /**
      * @var array
@@ -74,10 +74,9 @@ final class EventListenerTrigger
      */
     public function invoke(): void
     {
-        $this->appliedEventsLogRepository->ensureHighestAppliedSequenceNumbersAreInitialized();
-
         foreach (array_keys($this->pendingEventListenerClassNames) as $listenerClassName) {
-            $job = new CatchUpEventListenerJob($listenerClassName);
+            $eventStore = $this->eventStoreManager->getEventStoreForEventListener($listenerClassName);
+            $job = new CatchUpEventListenerJob($listenerClassName, $eventStore->getIdentifier());
             // TODO make queue name configurable (per event type?)
             $this->jobManager->queue('neos-eventsourcing', $job);
         }
