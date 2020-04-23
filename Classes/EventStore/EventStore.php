@@ -117,9 +117,9 @@ final class EventStore
         $this->postCommitCallbacks[] = $callback;
     }
 
-    public function load(StreamName $streamName, int $minimumSequenceNumber = 0): EventStream
+    public function load(StreamName $streamName, int $minimumSequenceNumber = 0, array $filterByType = []): EventStream
     {
-        $eventStream = $this->storage->load($streamName, $minimumSequenceNumber);
+        $eventStream = $this->storage->load($streamName, $minimumSequenceNumber, $filterByType);
         if (!$eventStream->valid()) {
             throw new EventStreamNotFoundException(sprintf('The event stream "%s" does not appear to be valid.', $streamName), 1477497156);
         }

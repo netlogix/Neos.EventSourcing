@@ -13,6 +13,7 @@ namespace Neos\EventSourcing\EventListener;
  */
 
 use Doctrine\DBAL\Connection;
+use Neos\EventSourcing\Event\EventTypeResolver;
 use Neos\EventSourcing\EventListener\AppliedEventsStorage\AppliedEventsStorageInterface;
 use Neos\EventSourcing\EventListener\AppliedEventsStorage\DoctrineAppliedEventsStorage;
 use Neos\EventSourcing\EventListener\Exception\EventCouldNotBeAppliedException;
@@ -21,6 +22,7 @@ use Neos\EventSourcing\EventStore\EventStore;
 use Neos\EventSourcing\EventStore\Exception\EventStreamNotFoundException;
 use Neos\EventSourcing\EventStore\StreamAwareEventListenerInterface;
 use Neos\EventSourcing\EventStore\StreamName;
+use Neos\Flow\Annotations as Flow;
 
 final class EventListenerInvoker
 {
@@ -55,6 +57,18 @@ final class EventListenerInvoker
      * @var int
      */
     private $transactionBatchSize = 1;
+
+    /**
+     * @Flow\Inject
+     * @var EventListenerLocator
+     */
+    protected $eventListenerLocator;
+
+    /**
+     * @Flow\Inject
+     * @var EventTypeResolver
+     */
+    protected $eventTypeResolver;
 
     public function __construct(EventStore $eventStore, EventListenerInterface $eventListener, Connection $connection)
     {
@@ -113,8 +127,12 @@ final class EventListenerInvoker
         $appliedEventsStorage = $this->getAppliedEventsStorage();
         $highestAppliedSequenceNumber = $appliedEventsStorage->reserveHighestAppliedEventSequenceNumber();
         $streamName = $this->eventListener instanceof StreamAwareEventListenerInterface ? $this->eventListener::listensToStream() : StreamName::all();
+        $eventTypes = array_map(function (string $className) {
+            return $this->eventTypeResolver->getEventTypeByClassName($className);
+        }, $this->eventListenerLocator->getEventClassNamesByListenerClassName(\get_class($this->eventListener)));
+
         try {
-            $eventStream = $this->eventStore->load($streamName, $highestAppliedSequenceNumber + 1);
+            $eventStream = $this->eventStore->load($streamName, $highestAppliedSequenceNumber + 1, $eventTypes);
         } catch (EventStreamNotFoundException $exception) {
             // this is not an error
             $appliedEventsStorage->releaseHighestAppliedSequenceNumber();
