@@ -147,6 +147,11 @@ class DoctrineEventStorage implements CorrelationIdAwareEventStorageInterface
         while (true) {
             $this->reconnectDatabaseConnection();
             $this->connection->beginTransaction();
+
+            # `SELECT FOR UPDATE` write-locks affected data, `SELECT MAX() FOR UPDATE` write-locks the table.
+            # This should be "LOCK TABLE" but "LOCK TABLE" doesn't play nicely with transactions.
+            $this->connection->query('SELECT MAX(sequencenumber) FROM ' . $this->eventTableName . ' FOR UPDATE')->fetchAll();
+
             if ($this->connection->getTransactionNestingLevel() > 1) {
                 throw new \RuntimeException('A transaction is active already, can\'t commit events!', 1547829131);
             }
