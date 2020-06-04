@@ -15,6 +15,7 @@ namespace Neos\EventSourcing\EventStore\Storage\Doctrine;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ConnectionException;
 use Doctrine\DBAL\DBALException;
+use Doctrine\DBAL\Exception\DeadlockException;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\DBAL\Schema\Comparator;
 use Doctrine\DBAL\Schema\Schema;
@@ -33,6 +34,7 @@ use Neos\EventSourcing\EventStore\WritableEvent;
 use Neos\EventSourcing\EventStore\WritableEvents;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Utility\Now;
+use Throwable;
 
 /**
  * Database event storage adapter
@@ -144,18 +146,30 @@ class DoctrineEventStorage implements CorrelationIdAwareEventStorageInterface
         $retryWaitInterval = 0.005;
         $maxRetryAttempts = 25;
         $retryAttempt = 0;
+
+        $rollback = function(Throwable $previous) use (&$retryAttempt, $maxRetryAttempts, &$retryWaitInterval) {
+            if ($retryAttempt >= $maxRetryAttempts) {
+                $this->connection->rollBack();
+                throw new ConcurrencyException(sprintf('Failed after %d retry attempts', $retryAttempt), 1573817175, $previous);
+            }
+            usleep((int)($retryWaitInterval * 1E6));
+            $retryAttempt ++;
+            $retryWaitInterval *= 1.2;
+            $this->connection->rollBack();
+        };
+
         while (true) {
             $this->reconnectDatabaseConnection();
             $this->connection->beginTransaction();
-
-            # `SELECT FOR UPDATE` write-locks affected data, `SELECT MAX() FOR UPDATE` write-locks the table.
-            # This should be "LOCK TABLE" but "LOCK TABLE" doesn't play nicely with transactions.
-            $this->connection->query('SELECT MAX(sequencenumber) FROM ' . $this->eventTableName . ' FOR UPDATE')->fetchAll();
 
             if ($this->connection->getTransactionNestingLevel() > 1) {
                 throw new \RuntimeException('A transaction is active already, can\'t commit events!', 1547829131);
             }
             try {
+                # `SELECT FOR UPDATE` write-locks affected data, `SELECT MAX() FOR UPDATE` write-locks the table.
+                # This should be "LOCK TABLE" but "LOCK TABLE" doesn't play nicely with transactions.
+                $this->connection->query('SELECT MAX(sequencenumber) FROM ' . $this->eventTableName . ' FOR UPDATE')->fetchAll();
+
                 $actualVersion = $this->getStreamVersion($streamName);
                 $this->verifyExpectedVersion($actualVersion, $expectedVersion);
                 foreach ($events as $event) {
@@ -163,14 +177,10 @@ class DoctrineEventStorage implements CorrelationIdAwareEventStorageInterface
                     $this->commitEvent($streamName, $event, $actualVersion);
                 }
             } catch (UniqueConstraintViolationException $exception) {
-                if ($retryAttempt >= $maxRetryAttempts) {
-                    $this->connection->rollBack();
-                    throw new ConcurrencyException(sprintf('Failed after %d retry attempts', $retryAttempt), 1573817175, $exception);
-                }
-                usleep((int)($retryWaitInterval * 1E6));
-                $retryAttempt ++;
-                $retryWaitInterval *= 1.2;
-                $this->connection->rollBack();
+                $rollback($exception);
+                continue;
+            } catch (DeadlockException $exception) {
+                $rollback($exception);
                 continue;
             } catch (DBALException $exception) {
                 $this->connection->rollBack();
@@ -185,7 +195,7 @@ class DoctrineEventStorage implements CorrelationIdAwareEventStorageInterface
      * @param StreamName $streamName
      * @param WritableEvent $event
      * @param int $version
-     * @throws DBALException | UniqueConstraintViolationException
+     * @throws DBALException | UniqueConstraintViolationException | DeadlockException
      */
     private function commitEvent(StreamName $streamName, WritableEvent $event, int $version): void
     {
